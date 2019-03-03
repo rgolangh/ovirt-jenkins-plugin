@@ -14,6 +14,10 @@
             <name>Daniel Belenky</name>
             <email>dbelenky@redhat.com</email>
         </developer>
+        <developer>
+            <name>Roy Golan</name>
+            <email>rgolan@redhat.com</email>
+        </developer>
     </developers>
 
     <groupId>org.ovirt.jenkins.plugin</groupId>
@@ -22,7 +26,7 @@
     <packaging>hpi</packaging>
 
     <properties>
-        <jenkins.version>2.7.3</jenkins.version>
+        <jenkins.version>2.150.2</jenkins.version>
         <java.level>8</java.level>
     </properties>
 
@@ -71,5 +75,26 @@
             <version>2.1.18</version>
         </dependency>
     </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>2.3.2</version>
+                    <configuration>
+                        <source>1.8</source>
+                        <target>1.8</target>
+                        <includes>
+                            <include>**/*.txt</include>
+                            <include>**/*.java</include>
+                            <include>**/*.properties</include>
+                        </includes>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
 
 </project>

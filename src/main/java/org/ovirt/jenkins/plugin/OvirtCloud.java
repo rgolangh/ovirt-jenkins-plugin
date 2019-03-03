@@ -1,19 +1,6 @@
 package org.ovirt.jenkins.plugin;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import com.cloudbees.plugins.credentials.CredentialsMatchers;
-import com.cloudbees.plugins.credentials.CredentialsProvider;
-import com.cloudbees.plugins.credentials.common.*;
-import com.cloudbees.plugins.credentials.domains.DomainRequirement;
-import com.cloudbees.plugins.credentials.domains.URIRequirementBuilder;
 import hudson.Extension;
-import hudson.Util;
 import hudson.model.Descriptor;
 import hudson.model.Label;
 import hudson.security.ACL;
@@ -23,17 +10,38 @@ import hudson.util.FormValidation;
 import hudson.util.ListBoxModel;
 import hudson.util.Secret;
 import jenkins.model.Jenkins;
+import static org.ovirt.engine.sdk4.ConnectionBuilder.connection;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import javax.annotation.CheckForNull;
+import javax.annotation.Nonnull;
+
 import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.interceptor.RequirePOST;
 import org.ovirt.engine.sdk4.Connection;
-import org.ovirt.engine.sdk4.ConnectionBuilder;
+import org.ovirt.engine.sdk4.builders.TagBuilder;
+import org.ovirt.engine.sdk4.services.AssignedTagsService;
+import org.ovirt.engine.sdk4.services.VmService;
+import org.ovirt.engine.sdk4.services.VmsService;
+import org.ovirt.engine.sdk4.types.Tag;
+import org.ovirt.engine.sdk4.types.Vm;
+import org.ovirt.jenkins.plugin.resources.OvirtApi;
 
-import javax.annotation.CheckForNull;
-
-import static org.ovirt.engine.sdk4.ConnectionBuilder.connection;
+import com.cloudbees.plugins.credentials.CredentialsMatchers;
+import com.cloudbees.plugins.credentials.CredentialsProvider;
+import com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials;
+import com.cloudbees.plugins.credentials.common.UsernamePasswordCredentials;
+import com.google.common.base.Strings;
 
 
 public class OvirtCloud extends Cloud {
@@ -116,11 +124,8 @@ public class OvirtCloud extends Cloud {
                 return FormValidation.error("Credentials ID is required");
             }
 
-            try (Connection connection = oVirtConnect(engineURL, credentialsId)) {
-                return FormValidation.ok("Successfully connected to oVirt!");
-            } catch (Exception e) {
-                return FormValidation.error("Could not connect to oVirt! {0}", e);
-            }
+            return oVirtConnect(engineURL, credentialsId) ?
+                FormValidation.ok("Successfully connected to oVirt!") : FormValidation.error("Could not connect to oVirt! ");
         }
 
         @RequirePOST
@@ -145,16 +150,30 @@ public class OvirtCloud extends Cloud {
      * @return true if successfully provisioned oVirt VM
      * @throws Exception if something went wrong
      */
-    private boolean oVirtProvision(Label label) throws Exception {
-        String virtualMachineLabel = resolveVirtualMachineLabel(label);
-
-        try {
-            // TODO: Provision a VM using oVirt SDK
-        } catch (Exception e) {
-            throw e;
+    private boolean oVirtProvision(@Nonnull Label label) throws Exception {
+        if (Strings.isNullOrEmpty(label.getName())) {
+            LOGGER.severe("label name is empty");
+            throw new RuntimeException("label name is empty");
         }
 
-        return true;
+        try {
+            VmsService.ListResponse send =
+                    OvirtApi.INSTANCE.getVmService().list().search("status=up tag='' and name=" + label.getName() + "*").send();
+            if (send.vms().size() > 0) {
+                Optional<Vm> vm = send.vms().stream().findFirst();
+                VmService vmService = OvirtApi.INSTANCE.getVmService().vmService(vm.get().id());
+
+                Tag tag = new TagBuilder()
+                        .name("jenkins_inuse").build();
+                AssignedTagsService.AddResponse setTag = vmService.tagsService().add().tag(tag).send();
+                LOGGER.info("added a tag " + setTag);
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            LOGGER.severe("failed searching for vm or setting a tag" + e);
+            throw e;
+        }
     }
 
     /**
@@ -190,20 +209,26 @@ public class OvirtCloud extends Cloud {
      * @param credentialsId
      * @return {@link Connection}
      */
-    static private Connection oVirtConnect(final String engineURL, final String credentialsId) {
+    static private boolean oVirtConnect(final String engineURL, final String credentialsId) {
         UsernamePasswordCredentials credentials = getCredentials(credentialsId);
-        try {
-            return connection()
-                    .url(engineURL)
-                    .user(credentials.getUsername())
-                    .password(Secret.toString(credentials.getPassword()))
-                    .build();
+        try (Connection connection = connection()
+                .url(engineURL)
+                .user(credentials.getUsername())
+                .password(Secret.toString(credentials.getPassword()))
+                .insecure(true)
+                .build()) {
+           String authenticate = connection.authenticate();
+           if (authenticate.length() > 0){
+               OvirtApi.INSTANCE.store(connection);
+           }
+           return true;
         } catch (Exception e) {
-            throw e;
+            e.printStackTrace();
+            return false;
         }
     }
 
-    /**
+        /**
      * Return the credentials matching the given ID.
      *
      * @param credentialsId
